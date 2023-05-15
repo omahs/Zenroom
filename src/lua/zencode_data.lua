@@ -274,99 +274,95 @@
 
  -- gets a string and returns the associated function, string and prefix
  -- comes before schema check
- function input_encoding(what)
-    if not luatype(what) == 'string' then
-       error("Call to input_encoding argument is not a string: "..type(what),2)
-    end
-    if what == 'u64' or what == 'url64' then
-       return f_factory_encoder('url64', O.from_url64, O.is_url64)
-    elseif what == 'b64' or what =='base64' then
-       return f_factory_encoder('base64', O.from_base64, O.is_base64)
-    elseif what == 'b58' or what =='base58' then
-       return f_factory_encoder('base58', O.from_base58, O.is_base58)
-    elseif what == 'hex' then
-       return f_factory_encoder('hex', O.from_hex, O.is_hex)
-    elseif what == 'bin' or what == 'binary' then
-       return f_factory_encoder('binary', O.from_bin, O.is_bin)
-    elseif what == 'str' or what == 'string' then
-       -- string has no check function
-       return f_factory_encoder('string', O.from_string, nil)
-    elseif what =='mnemonic' then
-       -- mnemonic has no check function (TODO:)
-       return f_factory_encoder('mnemonic', O.from_mnemonic, nil)
-    elseif what == 'int' or what == 'integer' then -- aka BIG
-       return f_factory_encoder('integer', BIG.from_decimal, BIG.is_integer)
-    elseif what == 'float' or what == 'num' or what == 'number' then
-       return f_factory_encoder('float', FLOAT.new, FLOAT.is_float)
-    end
+function input_encoding(what)
+  local encodings = {
+    u64 = f_factory_encoder('url64', O.from_url64, O.is_url64),
+    url64 = f_factory_encoder('url64', O.from_url64, O.is_url64),
+    b64 = f_factory_encoder('base64', O.from_base64, O.is_base64),
+    base64 = f_factory_encoder('base64', O.from_base64, O.is_base64),
+    b58 = f_factory_encoder('base58', O.from_base58, O.is_base58),
+    base58 = f_factory_encoder('base58', O.from_base58, O.is_base58),
+    hex = f_factory_encoder('hex', O.from_hex, O.is_hex),
+    bin = f_factory_encoder('binary', O.from_bin, O.is_bin),
+    binary = f_factory_encoder('binary', O.from_bin, O.is_bin),
+    str = f_factory_encoder('string', O.from_string, nil),
+    string = f_factory_encoder('string', O.from_string, nil),
+    mnemonic = f_factory_encoder('mnemonic', O.from_mnemonic, nil),
+    int = f_factory_encoder('integer', function(data) return BIG.from_decimal(data):octet() end, BIG.is_integer),
+    integer = f_factory_encoder('integer', function(data) return BIG.from_decimal(data):octet() end, BIG.is_integer),
+    float = f_factory_encoder('float', FLOAT.new, FLOAT.is_float),
+    num = f_factory_encoder('float', FLOAT.new, FLOAT.is_float),
+    number = f_factory_encoder('float', FLOAT.new, FLOAT.is_float)
+  }
+  if not luatype(what) == 'string' then
+     error("Call to input_encoding argument is not a string: "..type(what),2)
+  end
+  local enc = encodings[what]
+  if not enc then
     error("Input encoding not found: " .. what, 2)
     return nil
- end
+  end
+  return enc
+end
 
  -- factory function returns a small outcast function that applies
  -- return guessed.fun(guessed.raw)safety checks on values like
  -- exceptions for numbers and booleans
 
- local function f_factory_outcast(fun)
-    return function(data)
-       local dt = type(data)
-       if dt == 'table' then error("invalid table conversion",2) end
-       -- passthrough native number data
-       if dt == 'number' or dt == 'boolean' then
-	  return data
-       elseif dt == 'zenroom.big' then
-	  -- always export BIG INT as decimal
-	  return BIG.to_decimal(data)
-       elseif dt == 'zenroom.float' then
-	  return tonumber(tostring(data))
-       elseif iszen(dt) then
-	  -- leverage first class citizen method on zenroom data
-	  return fun(data:octet())
-       end
-       return fun(data)
+local function f_factory_outcast(fun)
+  return function(data)
+    local dt = type(data)
+    if dt == 'table' then error("invalid table conversion",2) end
+    -- passthrough native number data
+    if dt == 'number' or dt == 'boolean' then
+      return data
+    elseif dt == 'zenroom.float' then
+      return tonumber(tostring(data))
+    elseif iszen(dt) then
+      -- leverage first class citizen method on zenroom data
+      return fun(data:octet())
     end
- end
+    return fun(data)
+  end
+end
 
  -- takes a string returns the function, good for use in deepmap(fun,table)
- function guess_outcast(cast)
-    if not cast then
-       error('guess_outcast called with nil argument', 2)
-    end
-    if luatype(cast) ~= 'string' then
-       error('guess_outcast called with wrong argument: '..type(cast), 3) end
-    if cast == 'string' then
-       return f_factory_outcast(O.to_string)
-    elseif cast == 'hex' then
-       return f_factory_outcast(O.to_hex)
-    elseif cast == 'base64' then
-       return f_factory_outcast(O.to_base64)
-    elseif cast == 'url64' then
-       return f_factory_outcast(O.to_url64)
-    elseif cast == 'base58' then
-       return f_factory_outcast(O.to_base58)
-    elseif cast == 'binary' or cast == 'bin' then
-       return f_factory_outcast(O.to_bin)
-    elseif cast == 'mnemonic' then
-       return f_factory_outcast(O.to_mnemonic)
-    elseif cast == 'float' or cast == 'number' then
-       return f_factory_outcast(function(data) tonumber(tostring(data)) end)
-    elseif cast == 'integer' then
-       return f_factory_outcast(BIG.to_decimal)
-    elseif cast == 'boolean' then
-       return function(data) return data end
-    end
-    -- try schemas
-    local fun = ZEN.schemas[uscore(cast, ' ', '_')]
-    if luatype(fun) == 'table' then
-       -- complex schema encoding
-       assert(luatype(fun.export) == 'function',
-	      "Guess outcast cannot find schema export")
-       return fun.export
-    elseif fun then
-       return CONF.output.encoding.fun
-    end
-    error('Invalid output conversion: ' .. cast, 2)
-    return nil
+function guess_outcast(cast)
+  -- TODO: cast to float of octets does not work
+  local encodings = {
+    url64 = f_factory_outcast(O.to_url64),
+    base64 = f_factory_outcast(O.to_base64),
+    base58 = f_factory_outcast(O.to_base58),
+    hex = f_factory_outcast(O.to_hex),
+    binary = f_factory_outcast(O.to_bin),
+    bin = f_factory_outcast(O.to_bin),
+    string = f_factory_outcast(O.to_string),
+    mnemonic = f_factory_outcast(O.to_mnemonic),
+    integer = f_factory_outcast(BIG.to_decimal),
+    float = f_factory_outcast(function(data) return tonumber(tostring(data)) end),
+    number = f_factory_outcast(function(data) return tonumber(tostring(data)) end),
+    boolean = f_factory_outcast(function(data) return data end)
+  }
+  if not cast then
+    error('guess_outcast called with nil argument', 2)
+  end
+  if luatype(cast) ~= 'string' then
+    error('guess_outcast called with wrong argument: '..type(cast), 3)
+  end
+  local enc = encodings[cast]
+  if enc then return enc end
+  -- try schemas
+  local fun = ZEN.schemas[uscore(cast, ' ', '_')]
+  if luatype(fun) == 'table' then
+    -- complex schema encoding
+    assert(luatype(fun.export) == 'function',
+      "Guess outcast cannot find schema export")
+    return fun.export
+  elseif fun then
+    return CONF.output.encoding.fun
+  end
+  error('Invalid output conversion: ' .. cast, 2)
+  return nil
  end
 
  function get_format(what)
